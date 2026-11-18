@@ -49,52 +49,61 @@ Sjaelland's here.
 
 ### The seam
 
-The middle of the level bridge deck, in each route. There is water on both
-sides, the track is level and double in both routes, and each route keeps
-all of its own land: Sjaelland keeps Korsoer, the tunnel and Sprogoe;
-Jylland keeps Nyborg and everything west of it.
+On the level straight between Korsoer station and the tunnel ramp, 0.9 km
+west of the platforms. Sjaelland is used up to and including Korsoer
+station; from there on the tunnel, Sprogoe, the bridge and Nyborg are
+Jylland's. Both routes have plain double track here, level, between the
+last turnout of the station and the start of the ramp.
 
 | | Sjaelland | Jylland |
 |---|---|---|
-| ribbon | `06cbbba5-2fb6-4433-a6e8-d210e9a25e94` at 30.1 m | `8297e759-7713-46a1-a2a5-a2b224e45cbf` at 545.0 m |
-| position (x east, z north) | -106 589.90, -35 034.54 | 92 712.30, -288 451.59 |
-| direction of travel westwards | 202.155 degrees | 217.592 degrees |
-| height | 8.397 m | 9.385 m |
-| other track | `ce3d53ee-70bb-4595-8fb0-47d74a7018ac` at 530.2 m | `fb9f519a-e35a-4faf-bc45-6a400e8ffc1d` at 545.0 m |
+| ribbon | `9ee1f4d3-bc3a-434a-9308-9b8a6fa18c9d` at 111.0 m | `9039aea0-47c8-43a3-add6-2b42554ae0af` at 118.0 m |
+| position (x east, z north) | -92 443.67, -30 998.59 | 106 522.41, -279 488.18 |
+| direction of travel westwards | 200.105 degrees | 229.378 degrees |
+| height | 0.364 m | 1.360 m |
+| other track | `6b8e3d6c-7e33-4b90-b69e-07e6f3f3c8a3` at 31.2 m | `09e48540-c880-40e5-88de-ddb810eb6e61` at 40.2 m |
 
 Directions are measured anticlockwise from east.
 
-To bring Jylland into Sjaelland's frame: turn it by -15.437 degrees about
+To bring Jylland into Sjaelland's frame: turn it by -29.273 degrees about
 the seam point, move the seam point onto Sjaelland's, and lower everything
-by 0.988 m.
+by 0.996 m.
 
 - The first track then agrees by construction. The second track lands
-  0.8 mm from Sjaelland's, at the same height.
-- The curvature steps from a radius of about 20 km to about 57 km, which is
-  far below anything a train reacts to.
-- The joined deck is 7 051 m long.
-- With this placement Jylland's Nyborg lies 0.70 km from where Sjaelland
-  has its Nyborg, and Jylland's Korsoer 1.77 km from Sjaelland's. That is
-  the measure of how differently the two were laid out, and the reason only
-  one version of each station can be kept.
+  0.6 mm from Sjaelland's, at the same height.
+- Both tracks are straight at the seam.
+- With this placement Jylland's Korsoer platforms lie 80 m from
+  Sjaelland's, so the two stations are nearly the same shape. Jylland's
+  Nyborg lies 4.7 km from where Sjaelland has its Nyborg: the two crossings
+  are laid out differently, and only one of them can be kept.
+- The seam is on land. Terrain and scenery of the two routes meet here and
+  will need attention.
 
 ### The trip
 
 | | |
 |---|---|
-| Koebenhavn H to the seam (via Koege Nord, Ringsted, Korsoer) | 121.747 km |
-| seam to Aarhus H (Nyborg, Odense, Fredericia, Vejle, Horsens, Skanderborg) | 207.730 km |
+| Koebenhavn H to the seam (via Koege Nord, Ringsted, Korsoer) | 106.723 km |
+| seam to Aarhus H (Storebaelt, Nyborg, Odense, Fredericia, Vejle, Horsens) | 224.335 km |
 | Aarhus H to Frederikshavn (Randers, Hobro, Aalborg, Hjoerring) | 217.983 km |
-| **Koebenhavn H to Frederikshavn** | **547.46 km** |
+| **Koebenhavn H to Frederikshavn** | **549.04 km** |
 
 Aarhus H is entered and left at the same end, as in reality, so the train
 changes direction there.
 
 ### Other possible seams
 
+- The middle of the level deck of the west bridge: Sjaelland
+  `06cbbba5-2fb6-4433-a6e8-d210e9a25e94` at 30.1 m and Jylland
+  `8297e759-7713-46a1-a2a5-a2b224e45cbf` at 545.0 m; turn Jylland by
+  -15.437 degrees and lower it by 0.988 m; second track within 0.8 mm.
+  Water on both sides, so only the bridge itself has to meet. Sjaelland
+  keeps Korsoer, the tunnel and Sprogoe; Jylland keeps Nyborg. The trip is
+  then 547.46 km.
+- East of Korsoer station, where both routes have a level double-track
+  straight. Jylland's Korsoer would be kept as well.
 - The level straight east of Nyborg station, which is 1 150 m long in both
-  routes. Jylland's Storebaelt would then go unused and Sjaelland's bridge
-  would lead into Jylland's Nyborg.
+  routes. Sjaelland's whole crossing would lead into Jylland's Nyborg.
 - Sjaelland's west end, on a 495 m straight. Sjaelland's Nyborg would be
   kept and Jylland's left out.
 
