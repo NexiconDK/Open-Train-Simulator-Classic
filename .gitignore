@@ -1,0 +1,6 @@
+/target
+# Never commit game content. Point OPENTSC_RAILWORKS at your own install instead.
+*.ap
+*.pak
+*.GeoPcDx
+*.TgPcDx
