@@ -6,6 +6,7 @@
 
 pub mod files;
 pub mod geom;
+pub mod graph;
 pub mod map;
 pub mod route;
 pub mod terrain;

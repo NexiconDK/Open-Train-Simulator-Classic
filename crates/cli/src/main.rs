@@ -40,12 +40,36 @@ USAGE:
       Draw a route's track from above. <route> is the route's folder name or
       part of its display name. Also prints how well the curves fit together.
 
+  opentsc markers <RailWorks folder> <route> [text]
+      List the named places of a route (platforms, sidings, destinations),
+      optionally only those whose name contains the text.
+
+  opentsc path <RailWorks folder> <route> <from> <to> [output.svg]
+      Find the shortest way a train can take between two places and print
+      its length. A place is a marker name (or the start of one) or
+      `ribbon:<start of id>@<metres|start|end>`. An output file ending in
+      .svg gets the route's map with the path in red; one ending in .tsv
+      gets the list of ribbons travelled.
+
+  opentsc track-points <RailWorks folder> <route> <output.tsv>
+      Write a point every 5 m along every track centre line, as tab-separated
+      text: ribbon id, distance along the ribbon, x, z, heading in degrees,
+      rail height.
+
   opentsc scan <folder> [--max-errors N]
       Parse every SERZ file under a folder, including files inside .ap and
       .pak archives, and report what could not be read.
 ";
 
 type CliResult = Result<ExitCode, Box<dyn std::error::Error>>;
+
+/// `println!` into a string, for output that goes through [`print_all`].
+macro_rules! outln {
+    ($out:expr, $($arg:tt)*) => {{
+        $out.push_str(&format!($($arg)*));
+        $out.push('\n');
+    }};
+}
 
 fn main() -> ExitCode {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
@@ -70,6 +94,11 @@ fn main() -> ExitCode {
             blueprint(root, provider, product, path, options)
         }
         ["map", root, route, output] => map(root, route, output, !no_terrain),
+        ["track-points", root, route, output] => track_points(root, route, output),
+        ["markers", root, route] => markers(root, route, ""),
+        ["markers", root, route, text] => markers(root, route, text),
+        ["path", root, route, from, to] => path(root, route, from, to, None),
+        ["path", root, route, from, to, output] => path(root, route, from, to, Some(output)),
         ["scan", folder] => scan(folder, max_errors),
         [] | ["help"] | ["--help"] | ["-h"] => {
             print!("{USAGE}");
@@ -189,9 +218,12 @@ fn blueprint(
     print_all(&xml::to_string_with(&doc, options))
 }
 
-fn map(root: &str, wanted: &str, output: &str, with_terrain: bool) -> CliResult {
-    use opentsc_route::map::{render_svg, terrain_heights, NodeCheck, TrackMap};
-
+/// Open the route whose folder name is `wanted` or whose display name
+/// contains it.
+fn find_route(
+    root: &str,
+    wanted: &str,
+) -> Result<opentsc_route::Route, Box<dyn std::error::Error>> {
     let routes = Install::open(root)?.routes()?;
     let needle = wanted.to_lowercase();
     let matches: Vec<_> = routes
@@ -215,7 +247,269 @@ fn map(root: &str, wanted: &str, output: &str, with_terrain: bool) -> CliResult 
         }
     };
 
-    let route = opentsc_route::Route::open(&info.path)?;
+    Ok(opentsc_route::Route::open(&info.path)?)
+}
+
+fn track_points(root: &str, wanted: &str, output: &str) -> CliResult {
+    use opentsc_route::track::assemble;
+    use std::collections::BTreeMap;
+
+    let route = find_route(root, wanted)?;
+    let mut by_ribbon: BTreeMap<String, Vec<opentsc_route::geom::Curve>> = BTreeMap::new();
+    for coord in route.track_tile_coords()? {
+        for ribbon in route.track_tile(coord)?.ribbons {
+            by_ribbon
+                .entry(ribbon.ribbon_id)
+                .or_default()
+                .extend(ribbon.curves);
+        }
+    }
+    let heights: std::collections::HashMap<String, opentsc_route::track::Ribbon> = route
+        .track_network()?
+        .ribbons
+        .into_iter()
+        .map(|ribbon| (ribbon.id.clone(), ribbon))
+        .collect();
+    let mut out = String::from("ribbon\tdistance\tx\tz\theading\theight\n");
+    let mut points = 0usize;
+    for (id, curves) in by_ribbon {
+        let (curves, _) = assemble(curves);
+        let mut before = 0.0;
+        for curve in &curves {
+            let steps = (curve.length / 5.0).ceil().max(1.0) as usize;
+            for i in 0..=steps {
+                let s = curve.length * i as f64 / steps as f64;
+                let pose = curve.pose_at(s);
+                let height = heights
+                    .get(&id)
+                    .and_then(|ribbon| ribbon.height_at(before + s))
+                    .map_or(String::new(), |h| format!("{h:.3}"));
+                out.push_str(&format!(
+                    "{id}\t{:.2}\t{:.3}\t{:.3}\t{:.3}\t{height}\n",
+                    before + s,
+                    pose.position[0],
+                    pose.position[1],
+                    pose.heading.to_degrees()
+                ));
+                points += 1;
+            }
+            before += curve.length;
+        }
+    }
+    fs::write(output, out)?;
+    println!("wrote {points} points to {output}");
+    Ok(ExitCode::SUCCESS)
+}
+
+fn markers(root: &str, wanted: &str, text: &str) -> CliResult {
+    let route = find_route(root, wanted)?;
+    let needle = text.to_lowercase();
+    let mut found: Vec<_> = route
+        .track_network()?
+        .markers
+        .into_iter()
+        .filter(|m| m.name.to_lowercase().contains(&needle))
+        .collect();
+    found.sort_by(|a, b| a.name.cmp(&b.name));
+    // Columns: name, kind, length, ribbon, distance of the middle along it.
+    let mut out = String::new();
+    for marker in &found {
+        out.push_str(&format!(
+            "{}\t{}\t{:.0} m\t{}\t{:.1}\n",
+            marker.name,
+            marker.kind,
+            (marker.end - marker.start).abs(),
+            marker.ribbon_id,
+            (marker.start + marker.end) / 2.0
+        ));
+    }
+    out.push_str(&format!("{} markers\n", found.len()));
+    print_all(&out)
+}
+
+/// Turn a place given on the command line into a position on the network.
+fn find_place(
+    network: &opentsc_route::track::TrackNetwork,
+    spec: &str,
+) -> Result<(opentsc_route::graph::Place, String), Box<dyn std::error::Error>> {
+    use opentsc_route::graph::Place;
+    if let Some(rest) = spec.strip_prefix("ribbon:") {
+        let (prefix, at) = rest
+            .split_once('@')
+            .ok_or("write ribbon:<id>@<metres|start|end>")?;
+        let matches: Vec<_> = network
+            .ribbons
+            .iter()
+            .filter(|r| r.id.starts_with(prefix))
+            .collect();
+        let [ribbon] = matches.as_slice() else {
+            return Err(format!(
+                "{} ribbons have an id starting with '{prefix}'",
+                matches.len()
+            )
+            .into());
+        };
+        let distance = match at {
+            "start" => 0.0,
+            "end" => ribbon.length,
+            metres => metres
+                .parse()
+                .map_err(|_| format!("'{metres}' is not a distance"))?,
+        };
+        let label = format!(
+            "ribbon {} at {distance:.1} m",
+            &ribbon.id[..ribbon.id.len().min(8)]
+        );
+        return Ok((
+            Place {
+                ribbon_id: ribbon.id.clone(),
+                distance,
+            },
+            label,
+        ));
+    }
+    let needle = spec.to_lowercase();
+    let mut candidates: Vec<_> = network
+        .markers
+        .iter()
+        .filter(|m| m.name.to_lowercase().starts_with(&needle))
+        .collect();
+    // An exact name wins; otherwise platforms before sidings, then by name.
+    candidates.sort_by_key(|m| {
+        (
+            m.name.to_lowercase() != needle,
+            !m.kind.to_lowercase().contains("platform"),
+            m.name.clone(),
+        )
+    });
+    let marker = candidates
+        .first()
+        .ok_or_else(|| format!("no marker starts with '{spec}'"))?;
+    Ok((
+        Place {
+            ribbon_id: marker.ribbon_id.clone(),
+            distance: (marker.start + marker.end) / 2.0,
+        },
+        marker.name.clone(),
+    ))
+}
+
+fn path(root: &str, wanted: &str, from: &str, to: &str, output: Option<&str>) -> CliResult {
+    use opentsc_route::graph::{Direction, TrackGraph};
+    use opentsc_route::map::{render_svg_with_path, TrackMap};
+    use std::collections::{HashMap, HashSet};
+
+    let mut out = String::new();
+    let route = find_route(root, wanted)?;
+    let title = route.name.clone().unwrap_or_else(|| route.id.clone());
+    let network = route.track_network()?;
+    let tracks = TrackMap::build(&route, 0.15)?;
+    let graph = TrackGraph::build(&network, &tracks.ribbon_shapes);
+    let (start, start_name) = find_place(&network, from)?;
+    let (goal, goal_name) = find_place(&network, to)?;
+    let Some(found) = graph.shortest_path(&start, &goal) else {
+        return Err(format!("no way for a train from {start_name} to {goal_name}").into());
+    };
+    outln!(out, "{title}: {start_name} -> {goal_name}");
+    outln!(
+        out,
+        "  {:.3} km over {} ribbons",
+        found.length / 1000.0,
+        found.steps.len()
+    );
+    // Platforms passed on the way, once per station.
+    let lengths: HashMap<&str, f64> = network
+        .ribbons
+        .iter()
+        .map(|r| (r.id.as_str(), r.length))
+        .collect();
+    let mut seen = HashSet::new();
+    let mut entered = 0.0; // metres travelled on entering the current ribbon
+    for (i, step) in found.steps.iter().enumerate() {
+        let length = lengths.get(step.ribbon_id.as_str()).copied().unwrap_or(0.0);
+        let forward = step.direction == Direction::Forward;
+        // Distance along the ribbon at which the train enters it.
+        let entry = match (i, forward) {
+            (0, _) => start.distance,
+            (_, true) => 0.0,
+            (_, false) => length,
+        };
+        let mut here: Vec<(f64, &str)> = network
+            .markers
+            .iter()
+            .filter(|m| m.ribbon_id == step.ribbon_id && m.kind.to_lowercase().contains("platform"))
+            .map(|m| {
+                let middle = (m.start + m.end) / 2.0;
+                (
+                    entered
+                        + if forward {
+                            middle - entry
+                        } else {
+                            entry - middle
+                        },
+                    m.name.as_str(),
+                )
+            })
+            .filter(|&(at, _)| (0.0..=found.length).contains(&at))
+            .collect();
+        here.sort_by(|a, b| a.0.total_cmp(&b.0));
+        for (at, name) in here {
+            let station = name.split(" Spor").next().unwrap_or(name).trim();
+            if seen.insert(station.to_string()) {
+                outln!(out, "  {:8.1} km  {station}", at / 1000.0);
+            }
+        }
+        entered += if forward { length - entry } else { entry };
+    }
+    match output {
+        // A table of the ribbons travelled: id, direction, and the stretch
+        // of each that the path uses.
+        Some(output) if output.to_lowercase().ends_with(".tsv") => {
+            let mut table = String::from("ribbon\tdirection\tfrom\tto\n");
+            let last = found.steps.len() - 1;
+            for (i, step) in found.steps.iter().enumerate() {
+                let length = lengths.get(step.ribbon_id.as_str()).copied().unwrap_or(0.0);
+                let forward = step.direction == Direction::Forward;
+                let from = match (i, forward) {
+                    (0, _) => start.distance,
+                    (_, true) => 0.0,
+                    (_, false) => length,
+                };
+                let to = match (i == last, forward) {
+                    (true, _) => goal.distance,
+                    (_, true) => length,
+                    (_, false) => 0.0,
+                };
+                table.push_str(&format!(
+                    "{}\t{}\t{from:.3}\t{to:.3}\n",
+                    step.ribbon_id,
+                    if forward { "forward" } else { "backward" }
+                ));
+            }
+            fs::write(output, table)?;
+            outln!(out, "  wrote {output}");
+        }
+        Some(output) => {
+            let ids: Vec<String> = found.steps.iter().map(|s| s.ribbon_id.clone()).collect();
+            let caption = vec![format!(
+                "{start_name} to {goal_name}: {:.1} km",
+                found.length / 1000.0
+            )];
+            fs::write(
+                output,
+                render_svg_with_path(&title, &caption, &tracks, &[], &ids),
+            )?;
+            outln!(out, "  wrote {output}");
+        }
+        None => {}
+    }
+    print_all(&out)
+}
+
+fn map(root: &str, wanted: &str, output: &str, with_terrain: bool) -> CliResult {
+    use opentsc_route::map::{render_svg, terrain_heights, NodeCheck, TrackMap};
+
+    let route = find_route(root, wanted)?;
     let title = route.name.clone().unwrap_or_else(|| route.id.clone());
     // Lines may stray 15 cm from the true curve: invisible on a map.
     let tracks = TrackMap::build(&route, 0.15)?;

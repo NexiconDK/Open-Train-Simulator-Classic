@@ -8,7 +8,9 @@
 use std::path::PathBuf;
 
 use opentsc_formats::Install;
+use opentsc_route::graph::{Direction, TrackGraph};
 use opentsc_route::map::{NodeCheck, TrackMap};
+use opentsc_route::track::RibbonEnd;
 use opentsc_route::Route;
 
 #[test]
@@ -70,4 +72,62 @@ fn curves_of_every_route_fit_together() {
         );
     }
     eprintln!("checked {checked} routes");
+}
+
+/// A train must be able to run through every plain joint, and through a
+/// turnout in exactly the two ways its legs allow.
+#[test]
+fn trains_can_pass_the_nodes_of_every_route() {
+    let Some(root) = std::env::var_os("OPENTSC_RAILWORKS").map(PathBuf::from) else {
+        eprintln!("OPENTSC_RAILWORKS is not set; skipping");
+        return;
+    };
+    let install = Install::open(root).expect("open installation");
+    for info in install.routes().expect("list routes") {
+        let route = Route::open(&info.path).expect("open route");
+        let name = route.name.clone().unwrap_or_else(|| route.id.clone());
+        let map = TrackMap::build(&route, 0.5).unwrap_or_else(|e| panic!("{name}: {e}"));
+        if map.curves() == 0 {
+            continue;
+        }
+        let network = route
+            .track_network()
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        let graph = TrackGraph::build(&network, &map.ribbon_shapes);
+        // Ways on from each ribbon end at a node, by number of connections.
+        let (mut joints, mut open_joints) = (0, 0);
+        let (mut turnouts, mut good_turnouts) = (0, 0);
+        for node in &network.nodes {
+            let ways: Vec<usize> = node
+                .connections
+                .iter()
+                .map(|c| {
+                    let towards_node = match c.end {
+                        RibbonEnd::End => Direction::Forward,
+                        RibbonEnd::Start => Direction::Backward,
+                    };
+                    graph.onward(&c.ribbon_id, towards_node).len()
+                })
+                .collect();
+            match ways.len() {
+                2 => {
+                    joints += 1;
+                    open_joints += usize::from(ways == [1, 1]);
+                }
+                3 => {
+                    turnouts += 1;
+                    let mut sorted = ways.clone();
+                    sorted.sort_unstable();
+                    good_turnouts += usize::from(sorted == [1, 1, 2]);
+                }
+                _ => {}
+            }
+        }
+        eprintln!(
+            "{name}: {open_joints}/{joints} joints passable, \
+             {good_turnouts}/{turnouts} turnouts with one trailing and two facing ways"
+        );
+        assert!(open_joints * 1000 >= joints * 995, "{name}: joints");
+        assert!(good_turnouts * 1000 >= turnouts * 995, "{name}: turnouts");
+    }
 }

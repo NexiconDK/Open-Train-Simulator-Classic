@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 
 use crate::geom::{Curve, CurveKind, Vec2};
+use crate::graph::RibbonShape;
 use crate::tile::{TileCoord, TILE_SIZE};
 use crate::track::{assemble, RibbonEnd, TrackNetwork};
 use crate::{Result, Route};
@@ -33,6 +34,10 @@ pub struct TrackMap {
     pub ribbon_lengths: HashMap<String, f64>,
     /// Where each ribbon starts and ends, in route metres.
     pub ribbon_ends: HashMap<String, (Vec2, Vec2)>,
+    /// Start pose, end pose and length of each ribbon, for route finding.
+    pub ribbon_shapes: HashMap<String, RibbonShape>,
+    /// Which entries of `lines` draw each ribbon.
+    pub ribbon_lines: HashMap<String, Vec<usize>>,
     /// Ribbons whose curves do not form one unbroken line, with the widest
     /// gap in metres.
     pub broken_ribbons: Vec<(String, f64)>,
@@ -91,11 +96,15 @@ impl TrackMap {
                 }
                 map.joint_gaps.extend(gaps.iter().copied());
                 if let (Some(first), Some(last)) = (curves.first(), curves.last()) {
+                    let (start, end) = (first.pose_at(0.0), last.end());
                     map.ribbon_ends
-                        .insert(id.clone(), (first.start, last.end().position));
+                        .insert(id.clone(), (start.position, end.position));
+                    map.ribbon_shapes
+                        .insert(id.clone(), RibbonShape { start, end, length });
                 }
-                map.ribbon_lengths.insert(id, length);
+                map.ribbon_lengths.insert(id.clone(), length);
             }
+            let first_line = map.lines.len();
             let mut line: Vec<Vec2> = Vec::new();
             for (i, curve) in curves.iter().enumerate() {
                 match curve.kind {
@@ -115,6 +124,10 @@ impl TrackMap {
             }
             if line.len() > 1 {
                 map.lines.push(line);
+            }
+            if is_ribbon {
+                map.ribbon_lines
+                    .insert(id, (first_line..map.lines.len()).collect());
             }
         }
         map.joint_gaps.sort_by(f64::total_cmp);
@@ -261,6 +274,18 @@ pub fn render_svg(
     tracks: &TrackMap,
     terrain: &[TileHeight],
 ) -> String {
+    render_svg_with_path(title, caption, tracks, terrain, &[])
+}
+
+/// Like [`render_svg`], with the ribbons listed in `path` drawn on top in a
+/// second colour.
+pub fn render_svg_with_path(
+    title: &str,
+    caption: &[String],
+    tracks: &TrackMap,
+    terrain: &[TileHeight],
+    path: &[String],
+) -> String {
     let Some([min_x, min_z, max_x, max_z]) = tracks.bounds() else {
         return String::from(
             "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 400 60\">\
@@ -341,6 +366,33 @@ pub fn render_svg(
         svg.push_str("\"/>\n");
     }
     let _ = writeln!(svg, "</g>");
+
+    if !path.is_empty() {
+        let _ = writeln!(
+            svg,
+            "<g class=\"tracks\" fill=\"none\" stroke=\"#d1242f\" stroke-width=\"3\" \
+             stroke-linejoin=\"round\" stroke-linecap=\"round\">"
+        );
+        let lines = path
+            .iter()
+            .filter_map(|id| tracks.ribbon_lines.get(id))
+            .flatten()
+            .filter_map(|&i| tracks.lines.get(i));
+        for line in lines {
+            svg.push_str("<path d=\"");
+            for (i, point) in line.iter().enumerate() {
+                let _ = write!(
+                    svg,
+                    "{}{:.1} {:.1}",
+                    if i == 0 { "M" } else { "L" },
+                    point[0] - left,
+                    top - point[1]
+                );
+            }
+            svg.push_str("\"/>\n");
+        }
+        let _ = writeln!(svg, "</g>");
+    }
 
     // Legend: title, caption, scale bar. Sized relative to the map.
     let unit = width.min(height * 2.0) / 60.0;

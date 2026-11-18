@@ -222,11 +222,26 @@ pub struct Node {
     pub pattern: Option<String>,
 }
 
+/// A named stretch of track: a platform, a siding or a destination.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Marker {
+    /// The name shown to the player, e.g. `Frederikshavn Spor 2`.
+    pub name: String,
+    /// File name of the marker's blueprint without its extension, which
+    /// tells the kinds apart, e.g. `Platform marker`.
+    pub kind: String,
+    pub ribbon_id: String,
+    /// Where the marked stretch starts and ends, in metres along the ribbon.
+    pub start: f64,
+    pub end: f64,
+}
+
 /// Content of `Networks/Tracks.bin`.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct TrackNetwork {
     pub ribbons: Vec<Ribbon>,
     pub nodes: Vec<Node>,
+    pub markers: Vec<Marker>,
 }
 
 /// Read ribbons and nodes from `Networks/Tracks.bin`.
@@ -250,6 +265,7 @@ pub fn parse_track_network(doc: &Document) -> Result<TrackNetwork> {
     };
 
     let mut ribbons = Vec::new();
+    let mut markers = Vec::new();
     for ribbon in container
         .child("Ribbon")
         .into_iter()
@@ -273,6 +289,40 @@ pub fn parse_track_network(doc: &Document) -> Result<TrackNetwork> {
             });
         }
         heights.sort_by(|a, b| a.position.total_cmp(&b.position));
+
+        let properties = ribbon
+            .child("Properties")
+            .and_then(|p| p.elements().next())
+            .and_then(|container| container.child("Property"));
+        for property in properties.into_iter().flat_map(Element::elements) {
+            if !is_class(property, "Network::cTrackMarkerProperty") {
+                continue;
+            }
+            let Some(name) = property
+                .find("Network::cTrackMarkerComponent")
+                .and_then(|component| component.string("DisplayName"))
+            else {
+                continue;
+            };
+            let kind = property
+                .path(&["Entity", "cOwnedEntity", "BlueprintID"])
+                .and_then(|id| id.find("iBlueprintLibrary::cAbsoluteBlueprintID"))
+                .and_then(|id| id.string("BlueprintID"))
+                .map(|path| {
+                    let file = path.rsplit(['\\', '/']).next().unwrap_or(path);
+                    file.rsplit_once('.')
+                        .map_or(file, |(stem, _)| stem)
+                        .to_string()
+                })
+                .unwrap_or_default();
+            markers.push(Marker {
+                name: name.to_string(),
+                kind,
+                ribbon_id: id.clone(),
+                start: number(property, "_start")?,
+                end: number(property, "_end")?,
+            });
+        }
         ribbons.push(Ribbon {
             id,
             length: number(ribbon, "_length")?,
@@ -316,7 +366,16 @@ pub fn parse_track_network(doc: &Document) -> Result<TrackNetwork> {
             pattern,
         });
     }
-    Ok(TrackNetwork { ribbons, nodes })
+    Ok(TrackNetwork {
+        ribbons,
+        nodes,
+        markers,
+    })
+}
+
+/// True if `e` is an element of class `name` (either spelling of `::`).
+pub(crate) fn is_class(e: &Element, name: &str) -> bool {
+    opentsc_formats::node::name_eq(&e.name, name)
 }
 
 /// The `Record` element every route data file wraps its content in.
@@ -492,6 +551,26 @@ mod tests {
                     <_manual d:type="bool">1</_manual>
                   </Network-iRibbon-cHeight>
                 </Height>
+                <Properties><Network-cPropertyContainer><Property>
+                  <Network-cTrackNetworkSpeedLimit>
+                    <_start d:type="sFloat32">0</_start><_end d:type="sFloat32">200</_end>
+                  </Network-cTrackNetworkSpeedLimit>
+                  <Network-cTrackMarkerProperty>
+                    <Entity><cOwnedEntity>
+                      <Component><Network-cTrackMarkerComponent>
+                        <DisplayName d:type="cDeltaString">Nyborg Spor 1</DisplayName>
+                      </Network-cTrackMarkerComponent></Component>
+                      <BlueprintID><iBlueprintLibrary-cAbsoluteBlueprintID>
+                        <BlueprintSetID><iBlueprintLibrary-cBlueprintSetID>
+                          <Provider d:type="cDeltaString">Kuju</Provider>
+                        </iBlueprintLibrary-cBlueprintSetID></BlueprintSetID>
+                        <BlueprintID d:type="cDeltaString">RailNetwork\Markers\Platform marker.xml</BlueprintID>
+                      </iBlueprintLibrary-cAbsoluteBlueprintID></BlueprintID>
+                    </cOwnedEntity></Entity>
+                    <_start d:type="sFloat32">20</_start>
+                    <_end d:type="sFloat32">180</_end>
+                  </Network-cTrackMarkerProperty>
+                </Property></Network-cPropertyContainer></Properties>
               </Network-cTrackRibbon>
             </Ribbon><Node>
               <Network-cTrackNode>

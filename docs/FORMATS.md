@@ -223,6 +223,12 @@ junctions or track ends. Per `Network::cTrackRibbon`:
 - `Properties`: track rule, speed limits, signals, transfer points and more
   (not interpreted yet), each with `_start`/`_end` or `_offset` positions
   along the ribbon.
+- Among the properties, `Network::cTrackMarkerProperty` is a **named place**:
+  a platform, siding or destination. Its name is the `DisplayName` of the
+  `Network::cTrackMarkerComponent` inside it, its extent is `_start` to
+  `_end` in metres along the ribbon, and the file name of its blueprint
+  tells the kind (`Platform marker`, `Siding marker`, ...). (**Verified**:
+  the platforms a path passes come out in timetable order, see below.)
 
 Next to the ribbons, the same container lists the **nodes**
 (`Network::cTrackNode`), the points where ribbon ends meet:
@@ -238,6 +244,13 @@ Next to the ribbons, the same container lists the **nodes**
 A node with one connection is the end of a line, two is a plain joint
 between ribbons, three is a turnout, four a crossing or slip.
 (**Verified**: see the node check below.)
+
+A node does not say which of its ribbons a train can pass between. That
+follows from the geometry: a train goes from one ribbon to another only if
+the track carries straight on, so at a turnout the single leg connects to
+both others and the two diverging legs do not connect to each other.
+`opentsc-route` allows a pass when the directions differ by less than about
+34 degrees. (**Verified**: see the passing check below.)
 
 ### Networks/Track Tiles
 
@@ -347,3 +360,13 @@ routes; Jylland and Sjaelland have none.
 This is a sample, not the whole installation. `opentsc scan <RailWorks folder>`
 runs the file check over everything and lists each file that fails, and
 `OPENTSC_RAILWORKS=... cargo test` runs the geometry check on every route.
+
+- Passing through nodes, on the same five routes: with the rule above,
+  11 563 of 11 566 two-way joints can be run through, and 7 395 of 7 396
+  turnouts come out with exactly one way on from each diverging leg and two
+  from the single leg.
+- Named places: 1 176 markers on Jylland and 1 445 on Sjaelland. The
+  shortest path from "Aarhus H" to "Frederikshavn" passes Hinnerup, Hadsten,
+  Langaa, Randers, Hobro, ... Hjoerring, Sindal, Tolne, Kvissel in the order
+  of the real line, over 218.0 km.
+
