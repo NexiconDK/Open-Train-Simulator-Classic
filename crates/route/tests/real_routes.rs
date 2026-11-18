@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 
 use opentsc_formats::Install;
-use opentsc_route::map::TrackMap;
+use opentsc_route::map::{NodeCheck, TrackMap};
 use opentsc_route::Route;
 
 #[test]
@@ -44,10 +44,10 @@ fn curves_of_every_route_fit_together() {
         );
 
         // Wherever a ribbon has curves, their lengths add up to its length.
-        for ribbon in route
+        let network = route
             .track_network()
-            .unwrap_or_else(|e| panic!("{name}: {e}"))
-        {
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        for ribbon in &network.ribbons {
             if let Some(sum) = map.ribbon_lengths.get(&ribbon.id) {
                 assert!(
                     (sum - ribbon.length).abs() < 0.05,
@@ -57,6 +57,17 @@ fn curves_of_every_route_fit_together() {
                 );
             }
         }
+
+        // Ribbon ends that a node joins are in the same place. A few nodes
+        // in hand-built routes are genuinely off (up to 1.8 m seen), so the
+        // check is on the 99th percentile: taking the wrong end of a ribbon
+        // anywhere in the reader would move far more than 1% of the nodes.
+        let nodes = NodeCheck::build(&network, &map);
+        assert!(
+            nodes.spread_quantile(0.99) < 0.02,
+            "{name}: ribbon ends at nodes are {:.3} m apart at the 99th percentile",
+            nodes.spread_quantile(0.99)
+        );
     }
     eprintln!("checked {checked} routes");
 }

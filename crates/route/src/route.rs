@@ -8,7 +8,7 @@ use opentsc_formats::{parse_document, xml};
 use crate::files::RouteFiles;
 use crate::terrain::TerrainTile;
 use crate::tile::TileCoord;
-use crate::track::{parse_track_network, Ribbon, TrackTile};
+use crate::track::{parse_track_network, TrackNetwork, TrackTile};
 use crate::Result;
 
 const TRACK_TILES: &str = "Networks/Track Tiles";
@@ -54,8 +54,8 @@ impl Route {
         TrackTile::parse(&parse_document(&data)?)
     }
 
-    /// Every ribbon of the route, from `Networks/Tracks.bin`.
-    pub fn track_network(&self) -> Result<Vec<Ribbon>> {
+    /// Ribbons and nodes of the route, from `Networks/Tracks.bin`.
+    pub fn track_network(&self) -> Result<TrackNetwork> {
         parse_track_network(&parse_document(&self.files.read("Networks/Tracks.bin")?)?)
     }
 

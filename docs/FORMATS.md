@@ -224,6 +224,21 @@ junctions or track ends. Per `Network::cTrackRibbon`:
   (not interpreted yet), each with `_start`/`_end` or `_offset` positions
   along the ribbon.
 
+Next to the ribbons, the same container lists the **nodes**
+(`Network::cTrackNode`), the points where ribbon ends meet:
+
+- `Connection`: one `sRConnection` per ribbon end, with the ribbon's GUID
+  (`_id`) and `_end/cNormFloat/Position`, which is 0 for the ribbon's start
+  and 1 for its end.
+- `PatternRef/…/Pattern`: nil, or the junction pattern
+  (`Network::cTurnoutPattern`, `cDoubleSlipPattern`, `cSingleSlipPattern`,
+  `cCrossingPattern`, `cTraverserPattern`), which also carries the scenery
+  entity of the switch. Not interpreted yet beyond its class name.
+
+A node with one connection is the end of a line, two is a plain joint
+between ribbons, three is a turnout, four a crossing or slip.
+(**Verified**: see the node check below.)
+
 ### Networks/Track Tiles
 
 The centre-line geometry. Each tile lists, per ribbon, the curves that
@@ -289,7 +304,7 @@ with a median error of 1 to 3 cm, and no other pairing of edges comes close.)
   `cHcImageDx` per mip level (format name, size, blob). A 64 × 64 mip of
   format `HC_IMAGE_FORMAT_COMPRESSED_INTERP_ALPHA` is 4 096 bytes, i.e. 16
   bytes per 4 × 4 block, which is the size of DXT3/DXT5 data.
-- Junctions (`Network::cNetworkNode`), which connect the ribbons.
+- Junction patterns: which way a turnout is set, and its geometry.
 
 ## How this was checked
 
@@ -307,19 +322,27 @@ files and 42 loose files.
   empty fields and one.
 - Six routes are listed with their names, two of them from `MainContent.ap`.
 
-- Track geometry, on three complete routes (Munich to Rosenheim, Sherman
-  Hill and a small unpacked route; 13 505 curves, 1 621 of them easements):
+- Track geometry, on five complete routes (Munich to Rosenheim, Sherman
+  Hill, Jylland, Sjaelland and a small demo route; 50 687 curves, 1 621 of
+  them easements):
   - every curve is one of the three known kinds;
   - the curves of every ribbon assemble into one unbroken line;
-  - at the 7 002 joints, the computed end of a curve and the stored start of
-    the next are at most 11 mm apart (99% within 4 mm);
-  - for all 6 466 ribbons that have curves, the curve lengths add up to the
-    ribbon's `_length` within 5 cm.
+  - at the 25 233 joints, the computed end of a curve and the stored start of
+    the next are at most 27 mm apart (99% within 4 mm on every route);
+  - for all 25 274 ribbons that have curves, the curve lengths add up to the
+    ribbon's `_length` within 5 cm;
+  - at 19 460 nodes that join two or more located ribbon ends, the ends are
+    in the same place: 99% within 8 mm on every route. Three nodes are
+    further off (8 cm, 12 cm, and one turnout on Sjaelland by 1.8 m); whether
+    that is how those junctions were built or something about patterns that
+    is not understood yet is open.
   `opentsc map` prints these figures for any route.
 
-Open questions from that check: some ribbons have no curves at all (20 on
-Munich to Rosenheim, 2 on Sherman Hill; most have length 0, a few are 250 to
-300 m long), and what the ribbon-less curves are for is not known.
+Other open questions from that check: some ribbons have no curves at all (20
+on Munich to Rosenheim, 16 on Jylland, 2 each on Sherman Hill and Sjaelland;
+most have length 0, a few are 250 to 300 m long), and what the ribbon-less
+curves are for is not known. Easements were only seen on the two commercial
+routes; Jylland and Sjaelland have none.
 
 This is a sample, not the whole installation. `opentsc scan <RailWorks folder>`
 runs the file check over everything and lists each file that fails, and

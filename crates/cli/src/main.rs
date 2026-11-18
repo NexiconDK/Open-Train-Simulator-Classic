@@ -190,7 +190,7 @@ fn blueprint(
 }
 
 fn map(root: &str, wanted: &str, output: &str, with_terrain: bool) -> CliResult {
-    use opentsc_route::map::{render_svg, terrain_heights, TrackMap};
+    use opentsc_route::map::{render_svg, terrain_heights, NodeCheck, TrackMap};
 
     let routes = Install::open(root)?.routes()?;
     let needle = wanted.to_lowercase();
@@ -246,13 +246,13 @@ fn map(root: &str, wanted: &str, output: &str, with_terrain: bool) -> CliResult 
     }
     println!(
         "  ribbons     {:>7}    track length {:.1} km",
-        network.len(),
+        network.ribbons.len(),
         tracks.length() / 1000.0
     );
 
     // Two independent checks of the geometry.
     let (mut agree, mut differ, mut without_curves) = (0, 0, 0);
-    for ribbon in &network {
+    for ribbon in &network.ribbons {
         match tracks.ribbon_lengths.get(&ribbon.id) {
             Some(sum) if (sum - ribbon.length).abs() <= 0.05 => agree += 1,
             Some(_) => differ += 1,
@@ -270,6 +270,33 @@ fn map(root: &str, wanted: &str, output: &str, with_terrain: bool) -> CliResult 
         tracks.gap_quantile(0.99) * 1000.0,
         tracks.gap_quantile(1.0)
     );
+    let nodes = NodeCheck::build(&network, &tracks);
+    let [ends, joints, turnouts, crossings] = nodes.by_connections;
+    println!(
+        "  nodes       {:>7}    {ends} track ends, {joints} plain joints, {turnouts} with three \
+         ends, {crossings} with four or more",
+        network.nodes.len()
+    );
+    println!(
+        "  ribbon ends meeting at a node: {} nodes checked; apart by median {:.1} mm, \
+         99% below {:.1} mm, worst {:.3} m",
+        nodes.spreads.len(),
+        nodes.spread_quantile(0.5) * 1000.0,
+        nodes.spread_quantile(0.99) * 1000.0,
+        nodes.spread_quantile(1.0)
+    );
+    if !nodes.loose.is_empty() {
+        println!(
+            "  {} nodes have ends more than 5 cm apart; the widest:",
+            nodes.loose.len()
+        );
+        for (spread, ends, pattern) in nodes.loose.iter().take(5) {
+            println!(
+                "    {spread:.3} m, {ends} ends, {}",
+                pattern.as_deref().unwrap_or("no pattern")
+            );
+        }
+    }
     for (id, gap) in tracks.broken_ribbons.iter().take(5) {
         println!("  ribbon {id} is not one unbroken line: gap of {gap:.1} m");
     }

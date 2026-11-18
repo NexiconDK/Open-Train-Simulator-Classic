@@ -196,27 +196,67 @@ impl Ribbon {
     }
 }
 
-/// Read the ribbon list from `Networks/Tracks.bin`.
-pub fn parse_track_network(doc: &Document) -> Result<Vec<Ribbon>> {
+/// Which end of a ribbon a node is attached to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RibbonEnd {
+    /// Position 0: where the ribbon's first curve starts.
+    Start,
+    /// Position 1: where its last curve ends.
+    End,
+}
+
+/// One ribbon end meeting a node.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Connection {
+    pub ribbon_id: String,
+    pub end: RibbonEnd,
+}
+
+/// A point where ribbon ends meet: a plain joint (two ends), a turnout
+/// (three), a crossing or slip (four), or the end of the line (one).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Node {
+    pub connections: Vec<Connection>,
+    /// Class name of the junction pattern, such as
+    /// `Network::cTurnoutPattern`, if the node has one.
+    pub pattern: Option<String>,
+}
+
+/// Content of `Networks/Tracks.bin`.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TrackNetwork {
+    pub ribbons: Vec<Ribbon>,
+    pub nodes: Vec<Node>,
+}
+
+/// Read ribbons and nodes from `Networks/Tracks.bin`.
+pub fn parse_track_network(doc: &Document) -> Result<TrackNetwork> {
     let network = doc
         .root()
         .and_then(|root| root.find("Network::cTrackNetwork"))
         .ok_or_else(|| Error::data("no Network::cTrackNetwork in the file"))?;
-    let Some(list) = network
+    let Some(container) = network
         .child("RibbonContainer")
         .and_then(|container| container.elements().next())
-        .and_then(|container| container.child("Ribbon"))
     else {
-        return Ok(Vec::new());
+        return Ok(TrackNetwork::default());
     };
+
+    let guid = |holder: Option<&Element>| -> Option<String> {
+        holder?
+            .find("cGUID")?
+            .string("DevString")
+            .map(str::to_string)
+    };
+
     let mut ribbons = Vec::new();
-    for ribbon in list.elements() {
-        let id = ribbon
-            .child("RibbonID")
-            .and_then(|id| id.find("cGUID"))
-            .and_then(|guid| guid.string("DevString"))
-            .ok_or_else(|| Error::data("ribbon without an id"))?
-            .to_string();
+    for ribbon in container
+        .child("Ribbon")
+        .into_iter()
+        .flat_map(Element::elements)
+    {
+        let id =
+            guid(ribbon.child("RibbonID")).ok_or_else(|| Error::data("ribbon without an id"))?;
         let mut heights = Vec::new();
         for point in ribbon
             .child("Height")
@@ -239,7 +279,44 @@ pub fn parse_track_network(doc: &Document) -> Result<Vec<Ribbon>> {
             heights,
         });
     }
-    Ok(ribbons)
+
+    let mut nodes = Vec::new();
+    for node in container
+        .child("Node")
+        .into_iter()
+        .flat_map(Element::elements)
+    {
+        let mut connections = Vec::new();
+        for link in node
+            .child("Connection")
+            .into_iter()
+            .flat_map(Element::elements)
+        {
+            let ribbon_id = guid(link.child("_id"))
+                .ok_or_else(|| Error::data("node connection without a ribbon id"))?;
+            let position = link
+                .path(&["_end", "cNormFloat"])
+                .map(|p| number(p, "Position"))
+                .transpose()?
+                .ok_or_else(|| Error::data("node connection without an end"))?;
+            let end = if position < 0.5 {
+                RibbonEnd::Start
+            } else {
+                RibbonEnd::End
+            };
+            connections.push(Connection { ribbon_id, end });
+        }
+        let pattern = node
+            .child("PatternRef")
+            .and_then(|r| r.find("Pattern"))
+            .and_then(|p| p.elements().next())
+            .map(|p| p.name.clone());
+        nodes.push(Node {
+            connections,
+            pattern,
+        });
+    }
+    Ok(TrackNetwork { ribbons, nodes })
 }
 
 /// The `Record` element every route data file wraps its content in.
@@ -416,10 +493,58 @@ mod tests {
                   </Network-iRibbon-cHeight>
                 </Height>
               </Network-cTrackRibbon>
-            </Ribbon></Network-cRibbonContainerUnstreamed></RibbonContainer>
+            </Ribbon><Node>
+              <Network-cTrackNode>
+                <Connection>
+                  <Network-cNetworkNode-sRConnection>
+                    <_id><cGUID><DevString d:type="cDeltaString">ribbon-a</DevString></cGUID></_id>
+                    <_end><cNormFloat><Position d:type="sFloat32">1</Position></cNormFloat></_end>
+                  </Network-cNetworkNode-sRConnection>
+                  <Network-cNetworkNode-sRConnection>
+                    <_id><cGUID><DevString d:type="cDeltaString">ribbon-b</DevString></cGUID></_id>
+                    <_end><cNormFloat><Position d:type="sFloat32">0</Position></cNormFloat></_end>
+                  </Network-cNetworkNode-sRConnection>
+                </Connection>
+                <PatternRef><Network-cTrackNode-sPatternRef>
+                  <Pattern><Network-cTurnoutPattern><Manual d:type="bool">0</Manual></Network-cTurnoutPattern></Pattern>
+                </Network-cTrackNode-sPatternRef></PatternRef>
+              </Network-cTrackNode>
+              <Network-cTrackNode>
+                <Connection/>
+                <PatternRef><Network-cTrackNode-sPatternRef>
+                  <Pattern><d:nil/></Pattern>
+                </Network-cTrackNode-sPatternRef></PatternRef>
+              </Network-cTrackNode>
+            </Node></Network-cRibbonContainerUnstreamed></RibbonContainer>
             </Network-cTrackNetwork></Record></cRecordSet>"#
         );
-        let ribbons = parse_track_network(&xml::parse_str(&text).unwrap()).unwrap();
+        let network = parse_track_network(&xml::parse_str(&text).unwrap()).unwrap();
+        assert_eq!(network.nodes.len(), 2);
+        assert_eq!(
+            network.nodes[0].connections,
+            [
+                Connection {
+                    ribbon_id: "ribbon-a".into(),
+                    end: RibbonEnd::End
+                },
+                Connection {
+                    ribbon_id: "ribbon-b".into(),
+                    end: RibbonEnd::Start
+                },
+            ]
+        );
+        assert_eq!(
+            network.nodes[0].pattern.as_deref(),
+            Some("Network-cTurnoutPattern")
+        );
+        assert_eq!(
+            network.nodes[1],
+            Node {
+                connections: vec![],
+                pattern: None
+            }
+        );
+        let ribbons = &network.ribbons;
         assert_eq!(ribbons.len(), 1);
         let ribbon = &ribbons[0];
         assert_eq!((ribbon.id.as_str(), ribbon.length), ("ribbon-a", 200.0));

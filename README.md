@@ -27,6 +27,7 @@ the track runs.
 | `Blueprints.pak` | list, read |
 | Installation | list routes; resolve *(provider, product, path)* to a file, loose or archived |
 | Track geometry | straights, arcs and easements of a route, joined into ribbons, to millimetre accuracy |
+| Track network | nodes that connect ribbon ends: joints, turnouts, crossings |
 | Terrain | height tiles |
 | Map | draw a route's track and terrain from above as SVG |
 
@@ -86,7 +87,8 @@ More crates follow the same one-per-subsystem split as the project grows
 1. ~~Read archives and SERZ files~~
 2. Route viewer
    - ~~track geometry and terrain heights, checked with a 2D map~~
-   - junctions, so ribbons form a connected network
+   - ~~nodes, so ribbons form a connected network~~
+   - junction patterns: turnout geometry and state
    - `GeoPcDx` meshes and `TgPcDx` textures
    - scenery placement, track cross sections (lofts)
    - draw one route in 3D with a free camera (wgpu)

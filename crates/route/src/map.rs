@@ -9,7 +9,7 @@ use std::fmt::Write as _;
 
 use crate::geom::{Curve, CurveKind, Vec2};
 use crate::tile::{TileCoord, TILE_SIZE};
-use crate::track::assemble;
+use crate::track::{assemble, RibbonEnd, TrackNetwork};
 use crate::{Result, Route};
 
 /// The id under which track tiles store curves that belong to no ribbon.
@@ -31,6 +31,8 @@ pub struct TrackMap {
     pub unknown_curves: HashMap<String, usize>,
     /// Summed curve length per ribbon id, in metres.
     pub ribbon_lengths: HashMap<String, f64>,
+    /// Where each ribbon starts and ends, in route metres.
+    pub ribbon_ends: HashMap<String, (Vec2, Vec2)>,
     /// Ribbons whose curves do not form one unbroken line, with the widest
     /// gap in metres.
     pub broken_ribbons: Vec<(String, f64)>,
@@ -88,6 +90,10 @@ impl TrackMap {
                     }
                 }
                 map.joint_gaps.extend(gaps.iter().copied());
+                if let (Some(first), Some(last)) = (curves.first(), curves.last()) {
+                    map.ribbon_ends
+                        .insert(id.clone(), (first.start, last.end().position));
+                }
                 map.ribbon_lengths.insert(id, length);
             }
             let mut line: Vec<Vec2> = Vec::new();
@@ -146,6 +152,80 @@ impl TrackMap {
                 ]
             }),
         )
+    }
+}
+
+/// What the nodes of a network look like once ribbon geometry is known.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct NodeCheck {
+    /// How many nodes join 1, 2, 3 and 4 or more ribbon ends:
+    /// track ends, plain joints, turnouts, crossings and slips.
+    pub by_connections: [usize; 4],
+    /// Nodes with no connection at all.
+    pub empty: usize,
+    /// For every node with two or more located ends, the largest distance
+    /// in metres between any two of them, sorted. All zeros would be
+    /// perfect: the ends of joined ribbons are in the same place.
+    pub spreads: Vec<f64>,
+    /// Nodes whose ends are more than 5 cm apart: the spread in metres, the
+    /// number of connections and the junction pattern. Widest first.
+    pub loose: Vec<(f64, usize, Option<String>)>,
+    /// Connections to ribbons that have no geometry.
+    pub unlocated: usize,
+    /// Positions of the nodes that join three or more ends.
+    pub junctions: Vec<Vec2>,
+}
+
+impl NodeCheck {
+    /// Compare every node of `network` with the ribbon ends in `tracks`.
+    pub fn build(network: &TrackNetwork, tracks: &TrackMap) -> Self {
+        let mut check = NodeCheck::default();
+        for node in &network.nodes {
+            match node.connections.len() {
+                0 => check.empty += 1,
+                n => check.by_connections[n.min(4) - 1] += 1,
+            }
+            let mut points: Vec<Vec2> = Vec::new();
+            for link in &node.connections {
+                match tracks.ribbon_ends.get(&link.ribbon_id) {
+                    Some(&(start, end)) => points.push(match link.end {
+                        RibbonEnd::Start => start,
+                        RibbonEnd::End => end,
+                    }),
+                    None => check.unlocated += 1,
+                }
+            }
+            if points.len() >= 2 {
+                let mut spread = 0.0f64;
+                for (i, a) in points.iter().enumerate() {
+                    for b in &points[i + 1..] {
+                        spread = spread.max((a[0] - b[0]).hypot(a[1] - b[1]));
+                    }
+                }
+                check.spreads.push(spread);
+                if spread > 0.05 {
+                    check
+                        .loose
+                        .push((spread, node.connections.len(), node.pattern.clone()));
+                }
+            }
+            if node.connections.len() >= 3 {
+                if let Some(&point) = points.first() {
+                    check.junctions.push(point);
+                }
+            }
+        }
+        check.spreads.sort_by(f64::total_cmp);
+        check.loose.sort_by(|a, b| b.0.total_cmp(&a.0));
+        check
+    }
+
+    /// The spread that `fraction` of the nodes stay below (0.5 = median).
+    pub fn spread_quantile(&self, fraction: f64) -> f64 {
+        match self.spreads.len() {
+            0 => 0.0,
+            n => self.spreads[((n - 1) as f64 * fraction.clamp(0.0, 1.0)).round() as usize],
+        }
     }
 }
 
