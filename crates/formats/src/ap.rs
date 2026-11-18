@@ -128,13 +128,13 @@ fn archive_error(e: zip::result::ZipError) -> Error {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::io::Cursor;
 
     /// A minimal stored-only ZIP writer, enough to build test archives
     /// without pulling the writing half of the zip crate into the build.
-    fn stored_zip(files: &[(&str, &[u8])]) -> Vec<u8> {
+    pub(crate) fn stored_zip(files: &[(&str, &[u8])]) -> Vec<u8> {
         let mut out = Vec::new();
         let mut central = Vec::new();
         for (name, data) in files {

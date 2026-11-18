@@ -114,21 +114,33 @@ impl Install {
         Ok(None)
     }
 
-    /// Read one asset file. Loose files win over archived ones, which is how
-    /// patches and reskins override packed content.
+    /// Read one asset file.
+    ///
+    /// Search order: a loose file in the product folder, then the `.ap`
+    /// archives in the product folder, then `.ap` archives one level up in
+    /// the provider folder (those hold paths that start with the product
+    /// name). Loose files come first so that patches and reskins can
+    /// override packed content.
     pub fn read_asset(&self, provider: &str, product: &str, path: &str) -> Result<Vec<u8>> {
         let not_found = || Error::NotFound(format!(r"asset {provider}\{product}\{path}"));
-        let assets = resolve(&self.root, "Assets").ok_or_else(not_found)?;
-        let product_dir = resolve(&assets, provider)
-            .and_then(|p| resolve(&p, product))
+        let provider_dir = resolve(&self.root, "Assets")
+            .and_then(|assets| resolve(&assets, provider))
             .ok_or_else(not_found)?;
-        if let Some(loose) = resolve(&product_dir, path) {
-            if loose.is_file() {
-                return Ok(fs::read(loose)?);
+        if let Some(product_dir) = resolve(&provider_dir, product).filter(|p| p.is_dir()) {
+            if let Some(loose) = resolve(&product_dir, path) {
+                if loose.is_file() {
+                    return Ok(fs::read(loose)?);
+                }
+            }
+            for archive in archives_in(&product_dir)? {
+                if let Some(data) = self.read_from_archive(&archive, path)? {
+                    return Ok(data);
+                }
             }
         }
-        for archive in archives_in(&product_dir)? {
-            if let Some(data) = self.read_from_archive(&archive, path)? {
+        let prefixed = format!("{product}/{path}");
+        for archive in archives_in(&provider_dir)? {
+            if let Some(data) = self.read_from_archive(&archive, &prefixed)? {
                 return Ok(data);
             }
         }
@@ -284,6 +296,56 @@ mod tests {
             install.read_asset("Kuju", "RailSimulator", r"Scenery\Missing.bin"),
             Err(Error::NotFound(_))
         ));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn reads_assets_from_product_and_provider_archives() {
+        use crate::ap::tests::stored_zip;
+        let root = temp_dir("archives");
+        fs::create_dir_all(root.join("Content")).unwrap();
+        fs::create_dir_all(root.join("Assets/RSC/Signals")).unwrap();
+        fs::create_dir_all(root.join("Assets/Castle")).unwrap();
+        fs::write(
+            root.join("Assets/RSC/Signals/SignalsAssets.ap"),
+            stored_zip(&[
+                ("RailNetwork/Sig.bin", b"packed"),
+                ("RailNetwork/Both.bin", b"packed"),
+            ]),
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("Assets/RSC/Signals/RailNetwork")).unwrap();
+        fs::write(
+            root.join("Assets/RSC/Signals/RailNetwork/Both.bin"),
+            b"loose",
+        )
+        .unwrap();
+        // An archive in the provider folder: paths start with the product.
+        fs::write(
+            root.join("Assets/Castle/CastleAssets.ap"),
+            stored_zip(&[("Scenery/Station.bin", b"provider-level")]),
+        )
+        .unwrap();
+
+        let install = Install::open(&root).unwrap();
+        assert_eq!(
+            install
+                .read_asset("RSC", "Signals", r"railnetwork\sig.bin")
+                .unwrap(),
+            b"packed"
+        );
+        assert_eq!(
+            install
+                .read_asset("RSC", "Signals", r"RailNetwork\Both.bin")
+                .unwrap(),
+            b"loose"
+        );
+        assert_eq!(
+            install
+                .read_asset("Castle", "Scenery", "Station.bin")
+                .unwrap(),
+            b"provider-level"
+        );
         fs::remove_dir_all(&root).unwrap();
     }
 

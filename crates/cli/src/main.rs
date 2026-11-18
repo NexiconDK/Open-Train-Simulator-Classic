@@ -192,6 +192,8 @@ struct Scan {
     errors: Vec<String>,
     max_errors: usize,
     unreadable: u64,
+    /// Files that parsed but close an element under the wrong name.
+    mismatched: Vec<String>,
 }
 
 impl Scan {
@@ -203,8 +205,18 @@ impl Scan {
             .unwrap_or_default();
         let counts = self.by_extension.entry(extension).or_default();
         self.bytes += data.len() as u64;
-        match parse_document(data) {
-            Ok(_) => counts.0 += 1,
+        let outcome = if serz::is_serz(data) {
+            serz::parse_with_report(data).map(|(_, report)| report)
+        } else {
+            parse_document(data).map(|_| serz::Report::default())
+        };
+        match outcome {
+            Ok(report) => {
+                counts.0 += 1;
+                if report.mismatched_closes > 0 {
+                    self.mismatched.push(label.to_string());
+                }
+            }
             Err(error) => {
                 counts.1 += 1;
                 if self.errors.len() < self.max_errors {
@@ -276,6 +288,15 @@ fn scan(folder: &str, max_errors: usize) -> CliResult {
         scan.bytes as f64 / (1024.0 * 1024.0),
         started.elapsed().as_secs_f64()
     );
+    if !scan.mismatched.is_empty() {
+        println!(
+            "\n{} files close an element under the wrong name (tolerated):",
+            scan.mismatched.len()
+        );
+        for label in scan.mismatched.iter().take(scan.max_errors) {
+            println!("  {label}");
+        }
+    }
     if !scan.errors.is_empty() {
         println!("\nFirst {} problems:", scan.errors.len());
         for error in &scan.errors {

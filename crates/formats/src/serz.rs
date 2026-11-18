@@ -39,6 +39,20 @@ pub fn is_serz(data: &[u8]) -> bool {
 
 /// Parse a complete `SERZ` file.
 pub fn parse(data: &[u8]) -> Result<Document> {
+    parse_with_report(data).map(|(document, _)| document)
+}
+
+/// Things a file got wrong that the reader put up with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Report {
+    /// Elements closed under a different name than they were opened with.
+    /// Some add-on blueprints do this, so it is not treated as an error; the
+    /// opening name is kept.
+    pub mismatched_closes: usize,
+}
+
+/// Like [`parse`], and also says which irregularities were tolerated.
+pub fn parse_with_report(data: &[u8]) -> Result<(Document, Report)> {
     Parser::new(data)?.run()
 }
 
@@ -83,7 +97,8 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn run(mut self) -> Result<Document> {
+    fn run(mut self) -> Result<(Document, Report)> {
+        let mut report = Report::default();
         let mut top: Vec<Node> = Vec::new();
         let mut stack: Vec<Element> = Vec::new();
 
@@ -109,13 +124,7 @@ impl<'a> Parser<'a> {
                         .pop()
                         .ok_or_else(|| Error::malformed(line_start, "close without open"))?;
                     if element.name != self.strings[name as usize] {
-                        return Err(Error::malformed(
-                            line_start,
-                            format!(
-                                "close of '{}' while '{}' is open",
-                                self.strings[name as usize], element.name
-                            ),
-                        ));
+                        report.mismatched_closes += 1;
                     }
                     Node::Element(element)
                 }
@@ -168,7 +177,7 @@ impl<'a> Parser<'a> {
                 format!("file ends while '{}' is still open", open.name),
             ));
         }
-        Ok(Document { nodes: top })
+        Ok((Document { nodes: top }, report))
     }
 
     /// Read the introduction of the next line: a fresh definition or a
@@ -500,20 +509,39 @@ mod tests {
     }
 
     #[test]
-    fn mismatched_close_is_an_error() {
+    fn mismatched_close_name_is_tolerated_and_reported() {
+        // <A><B>...</X></A>: the inner element is closed under another name,
+        // as some add-on blueprints do.
         let data = Bytes::header()
             .raw(&[0xFF, CMD_OPEN])
             .new_str("A")
             .u32(0)
-            .u32(0)
+            .u32(1)
             .raw(&[0xFF, CMD_OPEN])
             .new_str("B")
             .u32(0)
             .u32(0)
             .raw(&[0xFF, CMD_CLOSE])
+            .new_str("X")
+            .raw(&[0xFF, CMD_CLOSE])
             .str_ref(0)
             .0;
-        assert!(parse(&data).is_err());
+        let (doc, report) = parse_with_report(&data).unwrap();
+        assert_eq!(report.mismatched_closes, 1);
+        assert_eq!(doc.root().unwrap().child("B").unwrap().name, "B");
+    }
+
+    #[test]
+    fn unbalanced_elements_are_an_error() {
+        let open_only = Bytes::header()
+            .raw(&[0xFF, CMD_OPEN])
+            .new_str("A")
+            .u32(0)
+            .u32(0)
+            .0;
+        assert!(parse(&open_only).is_err());
+        let close_only = Bytes::header().raw(&[0xFF, CMD_CLOSE]).new_str("A").0;
+        assert!(parse(&close_only).is_err());
     }
 
     #[test]

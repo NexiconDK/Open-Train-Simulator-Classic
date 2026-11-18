@@ -36,9 +36,14 @@ uses `\`, is not consistent about letter case, and names the blueprint's
 (**Verified** on scenery tiles referring to `Kuju\RailSimulator`.)
 
 A route folder that contains only `Scenarios` belongs to a route that is not
-installed. A route's own files can also sit inside an `.ap` in its folder.
-(**Assumed**: the sample installation's unpacked route was the only kind
-inspected so far.)
+installed. A route's own files can also sit inside `MainContent.ap` in its
+folder, with the same relative paths as an unpacked route. (**Verified** on
+two packed routes.)
+
+An asset archive normally sits in the product folder and holds paths relative
+to it. It can also sit one level up, in the provider folder, and then its
+paths start with the product name. (**Verified**: `Castlerock\CastlerockAssets.ap`
+holds `Scenery/...`.)
 
 Loose files take priority over files inside `.ap` archives. (**Assumed**:
 this is the commonly described behaviour; not yet tested against the game.)
@@ -46,9 +51,11 @@ this is the commonly described behaviour; not yet tested against the game.)
 ## SERZ
 
 A compact binary encoding of an XML-like tree. Seen in `.bin`, `.proxybin`,
-`.GeoPcDx` (models), `.TgPcDx` (textures) and all route and scenario `.bin`
-files. Other files (`.ban` animations, `.out` compiled Lua, `.dav` audio) are
-different formats.
+`.GeoPcDx` (models), `.TgPcDx` (textures), `.XSec` (loft cross sections) and
+all route and scenario `.bin` files.
+
+Not SERZ, and not read yet: `.ban` (animations), `.out` and `.luac` (compiled
+Lua), `.lua`, `.dav` (audio), `.dcsv`, `.lan` (language tables), `.sbn`.
 
 ### Header
 
@@ -91,8 +98,13 @@ Notes:
   the XML sources match.)
 - The **child count** is not reliable: `InitialSave.bin` opens its root with
   a count of 0 and then nests the whole file inside. The reader therefore
-  builds the tree from open/close pairs and checks that names match.
-  (**Verified**)
+  builds the tree from open/close pairs. (**Verified**)
+- The **name in a close line is not reliable** either: three engine
+  blueprints of one add-on open `iAnimObjectRenderBlueprint::cAnimation` and
+  close it as `...::cAutoAnimation`. The reader keeps the opening name and
+  counts the mismatch in its report. (**Verified** that such files exist and
+  are otherwise well formed; that the game accepts them is **assumed** from
+  their presence in the product's `Blueprints.pak`.)
 - A value's **name can be empty**; the XML form calls such elements `e`.
   (**Verified**: GUID halves.)
 - Command `43` appears once near the start of route, tile, scenario, model
@@ -207,11 +219,19 @@ Not implemented yet; noted here so the next steps have a starting point.
 
 ## How this was checked
 
-- 834 SERZ files from one installation parse without error: 21 loose files,
-  the 61 entries of two `Blueprints.pak` files, and all 752 SERZ entries of
-  one `.ap` archive (458 blueprints, 118 models, 176 textures).
-- For three files that ship with their XML source (two scenery blueprints and
-  a 454-element sound proxy) the decoded tree is identical to the source:
-  same elements, types, ids and values.
-- `opentsc scan <RailWorks folder>` runs the same check over a whole
-  installation and lists every file that fails.
+Against a sample of about 1 GB taken from one installation: 7 `.ap` archives
+(two packed routes, three train packs, two asset packs), 16 `Blueprints.pak`
+files and 42 loose files.
+
+- `opentsc scan` parses all 15 305 SERZ documents in the sample without
+  error: 14 542 `.bin`, 542 `.TgPcDx`, 186 `.GeoPcDx`, 34 `.proxybin` and
+  1 `.XSec`. Three of them close an element under the wrong name (see above).
+- 30 binaries in the sample ship with their XML source. For 29 the decoded
+  tree is identical to the source: same elements, types, ids and values. The
+  30th (`DK_Skinner_Gammel_Ren`) is a different version from its source: the
+  binary names a buffer blueprint and 14 rumble sounds where the source has
+  empty fields and one.
+- Six routes are listed with their names, two of them from `MainContent.ap`.
+
+This is a sample, not the whole installation. `opentsc scan <RailWorks folder>`
+runs the same check over everything and lists each file that fails.
