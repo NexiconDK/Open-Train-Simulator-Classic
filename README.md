@@ -4,8 +4,9 @@ An open reimplementation of the Train Simulator Classic engine in Rust, in
 the spirit of openOMSI: new code that runs the routes and trains you already
 own.
 
-**Status: step 1 of many.** There is no simulator yet. What exists is the
-foundation everything else needs: reading the game's files.
+**Status: early.** There is no simulator yet. What exists is the foundation
+everything else needs: reading the game's files, and knowing exactly where
+the track runs.
 
 ## Principles
 
@@ -25,6 +26,9 @@ foundation everything else needs: reading the game's files.
 | `.ap` archives | list, read |
 | `Blueprints.pak` | list, read |
 | Installation | list routes; resolve *(provider, product, path)* to a file, loose or archived |
+| Track geometry | straights, arcs and easements of a route, joined into ribbons, to millimetre accuracy |
+| Terrain | height tiles |
+| Map | draw a route's track and terrain from above as SVG |
 
 Models and textures are readable as trees (materials, vertex declarations,
 buffers and mip levels as raw bytes) but not yet interpreted.
@@ -44,6 +48,7 @@ The binary is `target/release/opentsc` (`opentsc.exe` on Windows).
 
 ```
 opentsc routes "D:\SteamLibrary\steamapps\common\RailWorks"
+opentsc map    "D:\SteamLibrary\steamapps\common\RailWorks" "Munich" munich.svg
 opentsc scan   "D:\SteamLibrary\steamapps\common\RailWorks"
 opentsc bin2xml "...\Content\Routes\<guid>\Networks\Tracks.bin" tracks.xml
 opentsc bin2xml "...\Scenery\NakskovSt.GeoPcDx" --elide-blobs
@@ -51,9 +56,10 @@ opentsc blueprint "D:\...\RailWorks" Kuju RailSimulator "Scenery\Vegetation\Tree
 opentsc ap list "...\Assets\RSC\UKLEDsignals01\UKLEDsignals01Assets.ap"
 ```
 
-`scan` is the important one right now: it parses every SERZ file in the
-installation, including those inside archives, and lists what fails. Each
-failure is a gap in [docs/FORMATS.md](docs/FORMATS.md).
+`map` draws a route and prints how well its curves fit together; open the
+SVG in a browser. `scan` parses every SERZ file in the installation,
+including those inside archives, and lists what fails. Each failure is a gap
+in [docs/FORMATS.md](docs/FORMATS.md).
 
 To run the tests that need real files:
 
@@ -67,6 +73,7 @@ OPENTSC_RAILWORKS="D:\SteamLibrary\steamapps\common\RailWorks" cargo test
 
 ```
 crates/formats   opentsc-formats: file format readers, no rendering, no game logic
+crates/route     opentsc-route: track geometry, terrain, route maps
 crates/cli       opentsc: the command line tool
 docs/FORMATS.md  what is known about the formats, and how sure we are
 ```
@@ -77,9 +84,12 @@ More crates follow the same one-per-subsystem split as the project grows
 ## Roadmap
 
 1. ~~Read archives and SERZ files~~
-2. Route viewer: interpret terrain tiles, track ribbons, scenery placement,
-   `GeoPcDx` meshes and `TgPcDx` textures; draw one route with a free camera
-   (wgpu).
+2. Route viewer
+   - ~~track geometry and terrain heights, checked with a 2D map~~
+   - junctions, so ribbons form a connected network
+   - `GeoPcDx` meshes and `TgPcDx` textures
+   - scenery placement, track cross sections (lofts)
+   - draw one route in 3D with a free camera (wgpu)
 3. Train on track: track graph, one consist rolling with simple physics.
 4. Lua and cab: the engine and signal script API, controls, cab view, sound.
 5. Signals, AI traffic, scenarios.

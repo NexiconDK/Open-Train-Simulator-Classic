@@ -36,6 +36,10 @@ USAGE:
       Resolve a blueprint the way content refers to it and print it as XML.
       Example: opentsc blueprint D:\\RailWorks Kuju RailSimulator Scenery\\Tree.xml
 
+  opentsc map <RailWorks folder> <route> <output.svg> [--no-terrain]
+      Draw a route's track from above. <route> is the route's folder name or
+      part of its display name. Also prints how well the curves fit together.
+
   opentsc scan <folder> [--max-errors N]
       Parse every SERZ file under a folder, including files inside .ap and
       .pak archives, and report what could not be read.
@@ -46,6 +50,7 @@ type CliResult = Result<ExitCode, Box<dyn std::error::Error>>;
 fn main() -> ExitCode {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let elide_blobs = take_flag(&mut args, "--elide-blobs");
+    let no_terrain = take_flag(&mut args, "--no-terrain");
     let max_errors = match take_option(&mut args, "--max-errors") {
         Ok(value) => value.unwrap_or(20),
         Err(message) => return fail(&message),
@@ -64,6 +69,7 @@ fn main() -> ExitCode {
         ["blueprint", root, provider, product, path] => {
             blueprint(root, provider, product, path, options)
         }
+        ["map", root, route, output] => map(root, route, output, !no_terrain),
         ["scan", folder] => scan(folder, max_errors),
         [] | ["help"] | ["--help"] | ["-h"] => {
             print!("{USAGE}");
@@ -181,6 +187,114 @@ fn blueprint(
 ) -> CliResult {
     let doc = Install::open(root)?.load_blueprint(provider, product, path)?;
     print_all(&xml::to_string_with(&doc, options))
+}
+
+fn map(root: &str, wanted: &str, output: &str, with_terrain: bool) -> CliResult {
+    use opentsc_route::map::{render_svg, terrain_heights, TrackMap};
+
+    let routes = Install::open(root)?.routes()?;
+    let needle = wanted.to_lowercase();
+    let matches: Vec<_> = routes
+        .iter()
+        .filter(|r| {
+            r.id.eq_ignore_ascii_case(wanted)
+                || r.name
+                    .as_deref()
+                    .is_some_and(|n| n.to_lowercase().contains(&needle))
+        })
+        .collect();
+    let info = match matches.as_slice() {
+        [one] => *one,
+        [] => return Err(format!("no route matches '{wanted}'; see `opentsc routes`").into()),
+        many => {
+            let names: Vec<String> = many
+                .iter()
+                .map(|r| format!("{} ({})", r.name.as_deref().unwrap_or("?"), r.id))
+                .collect();
+            return Err(format!("'{wanted}' matches several routes: {}", names.join(", ")).into());
+        }
+    };
+
+    let route = opentsc_route::Route::open(&info.path)?;
+    let title = route.name.clone().unwrap_or_else(|| route.id.clone());
+    // Lines may stray 15 cm from the true curve: invisible on a map.
+    let tracks = TrackMap::build(&route, 0.15)?;
+    let network = route.track_network()?;
+    let terrain = if with_terrain {
+        terrain_heights(&route)?
+    } else {
+        Vec::new()
+    };
+
+    println!("{title}  ({})", route.id);
+    println!(
+        "  track tiles {:>7}    curves {} ({} straight, {} arc, {} easement)",
+        tracks.tiles,
+        tracks.curves(),
+        tracks.straights,
+        tracks.arcs,
+        tracks.easements
+    );
+    if tracks.loose_curves > 0 {
+        println!(
+            "  {} of the curves belong to no ribbon",
+            tracks.loose_curves
+        );
+    }
+    for (name, count) in &tracks.unknown_curves {
+        println!("  NOT READ: {count} curves of unknown kind {name}");
+    }
+    println!(
+        "  ribbons     {:>7}    track length {:.1} km",
+        network.len(),
+        tracks.length() / 1000.0
+    );
+
+    // Two independent checks of the geometry.
+    let (mut agree, mut differ, mut without_curves) = (0, 0, 0);
+    for ribbon in &network {
+        match tracks.ribbon_lengths.get(&ribbon.id) {
+            Some(sum) if (sum - ribbon.length).abs() <= 0.05 => agree += 1,
+            Some(_) => differ += 1,
+            None => without_curves += 1,
+        }
+    }
+    println!(
+        "  ribbon lengths: {agree} match their curves within 5 cm, {differ} differ, \
+         {without_curves} have no curves"
+    );
+    println!(
+        "  joints between curves: {}; gap median {:.1} mm, 99% below {:.1} mm, worst {:.3} m",
+        tracks.joint_gaps.len(),
+        tracks.gap_quantile(0.5) * 1000.0,
+        tracks.gap_quantile(0.99) * 1000.0,
+        tracks.gap_quantile(1.0)
+    );
+    for (id, gap) in tracks.broken_ribbons.iter().take(5) {
+        println!("  ribbon {id} is not one unbroken line: gap of {gap:.1} m");
+    }
+    let mut caption = vec![format!(
+        "{:.0} km of track, {} curves in {} tiles",
+        tracks.length() / 1000.0,
+        tracks.curves(),
+        tracks.tiles
+    )];
+    if !terrain.is_empty() {
+        let low = terrain.iter().map(|t| t.min).fold(f32::INFINITY, f32::min);
+        let high = terrain
+            .iter()
+            .map(|t| t.max)
+            .fold(f32::NEG_INFINITY, f32::max);
+        println!(
+            "  terrain tiles {:>5}    heights {low:.0} m to {high:.0} m",
+            terrain.len()
+        );
+        caption.push(format!("terrain {low:.0} to {high:.0} m, shaded by tile"));
+    }
+
+    fs::write(output, render_svg(&title, &caption, &tracks, &terrain))?;
+    println!("  wrote {output}");
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Running totals for `scan`.

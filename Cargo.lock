@@ -133,6 +133,7 @@ name = "opentsc-cli"
 version = "0.1.0"
 dependencies = [
  "opentsc-formats",
+ "opentsc-route",
 ]
 
 [[package]]
@@ -141,6 +142,13 @@ version = "0.1.0"
 dependencies = [
  "roxmltree",
  "zip",
+]
+
+[[package]]
+name = "opentsc-route"
+version = "0.1.0"
+dependencies = [
+ "opentsc-formats",
 ]
 
 [[package]]

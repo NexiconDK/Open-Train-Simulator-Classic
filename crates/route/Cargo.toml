@@ -1,0 +1,9 @@
+[package]
+name = "opentsc-route"
+description = "Route data of Train Simulator Classic: track geometry, terrain and maps"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+opentsc-formats = { path = "../formats" }

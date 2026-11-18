@@ -195,18 +195,91 @@ back without terminators, using `\`; data follows the names. Every entry is a
 SERZ file identical to the loose `.bin`. (**Verified** on two paks, 8 and 53
 entries.)
 
-## What the tree contains (first observations)
+## Route data
 
-Not implemented yet; noted here so the next steps have a starting point.
+Route files are SERZ record sets: `cRecordSet/Record/<content>`.
 
-- **Scenery tile**: `cRecordSet/Record/cDynamicEntity*`, each with a
-  `cPosOri` (far matrix: tile coordinates plus offset), a `BlueprintID`
-  triple and an entity GUID.
-- **Tracks.bin**: `Network::cTrackNetwork` with `Network::cTrackRibbon`s
-  (length, height points, properties such as speed limits, signals and
-  transfer points).
-- **Terrain tile**: tile X/Y and one 65 536-byte blob, which fits 128 × 128
-  samples of 4 bytes.
+### Coordinates
+
+A route is cut into square tiles of 1024 m. Tile file names give the tile's
+index as `±XXXXXX±ZZZZZZ.bin`. `x` grows to the east and `z` to the north:
+Munich to Rosenheim runs towards +x and -z, and Rosenheim lies south-east of
+Munich. (**Verified** on that route; the map of Sherman Hill also matches the
+real line, with Cheyenne in the east.)
+
+Positions are stored as a `cFarVector2` with, per axis, a whole tile count
+(`RouteCoordinate`, sInt32) and metres inside the tile (`TileCoordinate`,
+sFloat32). opentsc combines them into `f64` metres.
+
+### Networks/Tracks.bin
+
+`Network::cTrackNetwork` holds every *ribbon*: one stretch of track between
+junctions or track ends. Per `Network::cTrackRibbon`:
+
+- `_length`, in metres.
+- `RibbonID`, a GUID.
+- `Height`: points with `_position` (metres along the ribbon), `_height`
+  (metres) and `_manual`.
+- `Properties`: track rule, speed limits, signals, transfer points and more
+  (not interpreted yet), each with `_start`/`_end` or `_offset` positions
+  along the ribbon.
+
+### Networks/Track Tiles
+
+The centre-line geometry. Each tile lists, per ribbon, the curves that
+**start** in that tile; a ribbon's curves are therefore spread over the
+tiles it crosses and have to be put in order by matching each curve's end to
+the next one's start. Curves stored under the all-zero GUID belong to no
+ribbon and are unrelated to each other.
+
+Every curve has `Length`, `StartPos` and `StartTangent` (a unit vector
+`x z`). Three kinds exist in the samples:
+
+**`cCurveStraight`**: nothing else.
+
+**`cCurveArc`**: `Curvature` (1/m) and `CurveSign`. Sign +1
+bends to the right, -1 to the left.
+
+**`cCurveEasement`**: a transition spiral, with `Sharpness` (A), `Offset`
+(d), `L0`, `CurveSign` and `TraversalSign` (T). It also stores `L0Offset`
+and `L0Tangent`, the start point and direction in the spiral's own frame,
+which is what gave the formula away.
+
+The spiral is the clothoid's series cut off after the first terms. In its own
+frame (`z` along the initial direction, `x` to the right), at parameter `p`:
+
+```text
+point      x = CurveSign · A p³ / 6          z = p − A² p⁵ / 40
+direction  ( CurveSign · A p² / 2 ,  1 − A² p⁴ / 8 ), normalised
+```
+
+- The curve covers the parameters from `p(L0)` to `p(L0 + T · Length)`, so
+  T = +1 runs into the bend and T = -1 runs out of it.
+- With an offset, the point is moved sideways by `d · CurveSign · T` along
+  the right-hand normal, and stored distances `u` relate to the parameter by
+  `u = p − d · A · p² / 2`.
+- For an offset easement with T = -1, `Length` is therefore not exactly the
+  geometric length of the curve. Distances along ribbons still count in
+  stored units.
+
+(**Verified** by fit, see below. The offset rules are purely empirical: they
+are the one combination of signs, out of 64 tried, that makes the curves
+meet.)
+
+### Terrain
+
+`cHeightFieldTile` with `X`, `Y` (the tile index; `Y` is `z`) and one blob
+of 65 536 bytes: 128 × 128 heights in metres as 32-bit floats. Samples are
+8 m apart; rows run south to north and samples within a row west to east,
+starting on the tile's south-west corner. A tile does not repeat its
+neighbour's edge. (**Verified**: across about 950 pairs of neighbouring tiles,
+the last two samples of a row or column extrapolate to the neighbour's first
+with a median error of 1 to 3 cm, and no other pairing of edges comes close.)
+
+### Not interpreted yet
+
+- **Scenery tile**: `cDynamicEntity` records, each with a `cPosOri` (far
+  matrix: tile coordinates plus offset), a `BlueprintID` triple and a GUID.
 - **MixMap tile**: a 128 × 128 rectangle and one 98 304-byte blob, which fits
   6 bytes per sample.
 - **GeoPcDx**: `cHcGeometry` with materials (shader name, textures by name),
@@ -216,6 +289,7 @@ Not implemented yet; noted here so the next steps have a starting point.
   `cHcImageDx` per mip level (format name, size, blob). A 64 × 64 mip of
   format `HC_IMAGE_FORMAT_COMPRESSED_INTERP_ALPHA` is 4 096 bytes, i.e. 16
   bytes per 4 × 4 block, which is the size of DXT3/DXT5 data.
+- Junctions (`Network::cNetworkNode`), which connect the ribbons.
 
 ## How this was checked
 
@@ -233,5 +307,20 @@ files and 42 loose files.
   empty fields and one.
 - Six routes are listed with their names, two of them from `MainContent.ap`.
 
+- Track geometry, on three complete routes (Munich to Rosenheim, Sherman
+  Hill and a small unpacked route; 13 505 curves, 1 621 of them easements):
+  - every curve is one of the three known kinds;
+  - the curves of every ribbon assemble into one unbroken line;
+  - at the 7 002 joints, the computed end of a curve and the stored start of
+    the next are at most 11 mm apart (99% within 4 mm);
+  - for all 6 466 ribbons that have curves, the curve lengths add up to the
+    ribbon's `_length` within 5 cm.
+  `opentsc map` prints these figures for any route.
+
+Open questions from that check: some ribbons have no curves at all (20 on
+Munich to Rosenheim, 2 on Sherman Hill; most have length 0, a few are 250 to
+300 m long), and what the ribbon-less curves are for is not known.
+
 This is a sample, not the whole installation. `opentsc scan <RailWorks folder>`
-runs the same check over everything and lists each file that fails.
+runs the file check over everything and lists each file that fails, and
+`OPENTSC_RAILWORKS=... cargo test` runs the geometry check on every route.
