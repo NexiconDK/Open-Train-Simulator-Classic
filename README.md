@@ -87,9 +87,9 @@ More crates follow the same one-per-subsystem split as the project grows
 
 ## License
 
-Marked `AGPL-3.0-only` in `Cargo.toml`, the same license as openOMSI, so code
-can move between the two projects. The `LICENSE` file with the full text has
-not been added yet.
+GNU Affero General Public License v3.0 only (`AGPL-3.0-only`), see
+[LICENSE](LICENSE). This is the same license as openOMSI, so code can move
+between the two projects.
 
 Train Simulator Classic and RailWorks are trademarks of their owners. This
 project is independent and not affiliated with or endorsed by them.
